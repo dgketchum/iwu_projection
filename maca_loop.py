@@ -1,3 +1,7 @@
+"""
+Credit: Chris Pearson, DRI.
+"""
+
 import time
 
 import ee

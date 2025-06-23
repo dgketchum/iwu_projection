@@ -18,27 +18,22 @@ MODEL_LIST = ['bcc-csm1-1', 'bcc-csm1-1-m', 'BNU-ESM', 'CanESM2', 'CCSM4',
 
 def project_net_et(historical_desc, correlations_csv_path, historical_npy_dir,
                    future_parquet_dir, out_dir, gfid_csv, from_month=12):
-    """Projects future irrigation water use (IWU) based on historical models.
-
-    For each agricultural field, this function identifies the best-performing historical regression model from the
-    correlation analysis CSV build in analysis.py. It then applies this model to future precipitation projections (
-    SPI) to predict future IWU. The projections for all climate models and scenarios are saved to a separate CSV file
-    for each field.
+    """Projects future irrigation water use (IWU) based on historical models. For each agricultural field,
+    this function identifies the best-performing historical regression model from the correlation analysis CSV build
+    in analysis.py. Best performing in this context only means highest correlation, positive or negative. It then
+    applies this model to future precipitation projections (SPI) to predict future IWU. The projections for all
+    climate models and scenarios are saved to a separate CSV file for each field.
 
     Args:
         historical_desc (str): Identifier for historical .npy data files.
         correlations_csv_path (str): Path to the CSV with correlation and
             regression coefficient results from a previous analysis.
         historical_npy_dir (str): Directory containing historical .npy data.
-        calculation (str): The water use metric used, e.g., 'cc' or 'simi'.
-        future_parquet_dir (str): Directory of field-specific .parquet files
-            containing future precipitation projections.
         out_dir (str): The directory where output projection files will be saved.
         gfid_csv (str): Path to a CSV file mapping field IDs to grid IDs (GFID).
         from_month (int, optional): The month of the year for which the
             analysis is performed. Defaults to 12.
-        ag_scale (int, optional): The rolling window timescale in months for
-            the agricultural data. Defaults to 12.
+
     """
 
     correlations_df = pd.read_csv(correlations_csv_path, index_col=0)
@@ -71,8 +66,14 @@ def project_net_et(historical_desc, correlations_csv_path, historical_npy_dir,
 
     hist_dt_range = pd.to_datetime([f'{y}-{m}-01' for y in range(1980, 2025) for m in range(1, 13)])
 
+    # uncomment/use for comparison purposes
+    et_data = historical_data[:, :, COLS.index('cc')].copy()
+    et_data[et_data < 0.] = 0.
+    iwu = pd.DataFrame(data=np.array(et_data).T, index=hist_dt_range, columns=field_index)
+    iwu = iwu.rolling(window=12, min_periods=12, closed='right').sum()
+    iwu = iwu[iwu.index.month == from_month].loc[hist_dt_range[0]:]
+
     for i, field_id in enumerate(field_index):
-        print(f'Processing field {field_id}: {i + 1} of {len(field_index)}')
 
         if field_id not in best_models:
             continue
@@ -97,6 +98,8 @@ def project_net_et(historical_desc, correlations_csv_path, historical_npy_dir,
 
                 if ppt_col_name not in future_field_df.columns:
                     continue
+
+
 
                 historical_ppt = historical_data[i, :, COLS.index('ppt')]
                 future_ppt_series = future_field_df[ppt_col_name]
@@ -129,7 +132,7 @@ def project_net_et(historical_desc, correlations_csv_path, historical_npy_dir,
         output_filename = os.path.join(out_dir, f'projected_iwu_{field_id}.csv')
         projection_df.to_csv(output_filename)
 
-    print("Processing complete.")
+        print(f"{output_filename} {projection_df.shape}")
 
 
 if __name__ == '__main__':
@@ -138,8 +141,8 @@ if __name__ == '__main__':
         root = '/home/dgketchum/data/IrrigationGIS'
 
     nv_data_dir = os.path.join(root, 'Nevada', 'dri_field_pts')
-    historical_npy_dir = os.path.join(nv_data_dir, 'fields_data', 'fields_npy')
-    results_dir = os.path.join(nv_data_dir, 'fields_data', 'indices')
+    historical_npy_dir_ = os.path.join(nv_data_dir, 'fields_data', 'fields_npy')
+    results_dir = os.path.join(nv_data_dir, 'fields_data', 'correlation_analysis')
 
     calculation_type = 'cc'
     standardize_water_use = False
@@ -148,25 +151,24 @@ if __name__ == '__main__':
     else:
         std_desc = 'rolling_sum'
 
-    correlations_csv = os.path.join(results_dir, calculation_type, '{}_{}.csv'.format(std_desc, calculation_type))
+    correlations_csv_ = os.path.join(results_dir, calculation_type, '{}_{}.csv'.format(std_desc, calculation_type))
 
-    future_data_dir = os.path.join(nv_data_dir, 'fields_data', 'projections', 'processed')
+    future_data_dir_ = os.path.join(nv_data_dir, 'fields_data', 'maca', 'processed')
 
     fields_gis = os.path.join(nv_data_dir, 'fields_gis')
     nv_fields_boundaries = os.path.join(fields_gis, 'Nevada_Agricultural_Field_Boundaries_20250214')
-    gfid_fields = os.path.join(nv_fields_boundaries,
+    gfid_fields_ = os.path.join(nv_fields_boundaries,
                                'Nevada_Agricultural_Field_Boundaries_20250214_5071_GFID.csv')
 
-    projection_out_dir = os.path.join(results_dir, 'projections')
-    os.makedirs(projection_out_dir, exist_ok=True)
+    projection_out_dir_ = os.path.join(nv_data_dir, 'fields_data', 'iwu_projections')
+    os.makedirs(projection_out_dir_, exist_ok=True)
 
     project_net_et(
         historical_desc='field_summaries_EToF_final',
-        correlations_csv_path=correlations_csv,
-        historical_npy_dir=historical_npy_dir,
-        future_parquet_dir=future_data_dir,
-        out_dir=projection_out_dir,
-        calculation=calculation_type,
-        gfid_csv=gfid_fields)
+        correlations_csv_path=correlations_csv_,
+        historical_npy_dir=historical_npy_dir_,
+        future_parquet_dir=future_data_dir_,
+        out_dir=projection_out_dir_,
+        gfid_csv=gfid_fields_)
 
 # ========================= EOF ====================================================================

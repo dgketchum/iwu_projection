@@ -223,8 +223,8 @@ if __name__ == '__main__':
 
     gridmet_factors = os.path.join(nv_fields_boundaries, 'Nevada_Fields_with_Nearest_GFID.json')
 
-    projections_extracts_ = os.path.join(fields_data, 'projections', 'exports')
-    projections_processed_ = os.path.join(fields_data, 'projections', 'processed')
+    projections_extracts_ = os.path.join(fields_data, 'maca', 'exports')
+    projections_processed_ = os.path.join(fields_data, 'maca', 'processed')
     met = os.path.join(fields_data, 'gridmet')
     split_projections(gfid_fields, projections_extracts_, projections_processed_,
                       gridmet_correction=gridmet_factors, num_workers=12)

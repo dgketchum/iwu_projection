@@ -25,6 +25,8 @@ def correlations(desc, npy_dir, out_dir, procs, calc, standardize_water_use):
     between meteorological drought (SPI) and irrigation water use (IWU). For now,
     the only function to run a subsequent projection is calc='cc' and  standardize_water_use=False.
 
+    TODO: needs a test/train split for validation.
+
     This function systematically explores the relationship between SPI and IWU for
     numerous agricultural fields. It iterates through various SPI timescales and
     calculates the IWU either as a standardized index or as a direct rolling
@@ -225,7 +227,7 @@ if __name__ == '__main__':
 
     pqt = os.path.join(nv_data, 'fields_data', 'field_summaries_EToF_final.parquet')
     indir = os.path.join(nv_data, 'fields_data', 'fields_npy')
-    odir = os.path.join(nv_data, 'fields_data', 'indices')
+    odir = os.path.join(nv_data, 'fields_data', 'correlation_analysis')
 
     # correlations('field_summaries_EToF_final', indir, odir, procs=6, calc='simi')
     correlations('field_summaries_EToF_final', indir, odir, procs=6, calc='cc', standardize_water_use=False)
