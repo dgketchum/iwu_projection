@@ -19,20 +19,37 @@ GRIDMET_RESAMPLE_MAP = {'year': 'first',
                         'prcp_mm': 'sum',
                         'eto_mm_uncorr': 'sum'}
 
-def preprocess_historical(in_pqt, gridmet, gridmet_gfid, outdir, target_areas=None):
+
+def preprocess_historical(in_pqt, gridmet, gridmet_gfid, outdir, target_areas=None, overwrite=False,
+                          anomalous_recs_file=None, expected_recs=480):
+
     fields = pd.read_csv(gridmet_gfid, index_col='OPENET_ID')
 
-    hyd_areas = [(f.split('.')[0], os.path.join(in_pqt, f)) for f in os.listdir(in_pqt) if f.endswith('parquet')]
+    hyd_areas = [(f.split('_')[0], os.path.join(in_pqt, f)) for f in os.listdir(in_pqt) if f.endswith('.parquet')]
+    hyd_areas = sorted(hyd_areas, key=lambda x: x[0])
+
+    misshape_records = {}
 
     for hydro_area, etof_file in hyd_areas:
 
         if target_areas and hydro_area not in target_areas:
             continue
 
+        out_json = os.path.join(outdir, f'{hydro_area}_index.json')
+        out_npy = os.path.join(outdir, f'{hydro_area}.npy')
+
+        if os.path.exists(out_json) and os.path.exists(out_npy) and not overwrite:
+            continue
+
         df = pd.read_parquet(etof_file)
         df.index = pd.DatetimeIndex(df['DATE'])
         zone_fids = list(set(df['OPENET_ID'].values))
         zone_fields = fields.loc[[i for i in fields.index if i in zone_fids]]
+
+        # seems I added a field-GFID feature for all 'nearest' gridmet centroids, pick the first
+        if len(zone_fields) != len(zone_fids):
+            duplicated_indices = zone_fields.index.duplicated(keep='first')
+            zone_fields = zone_fields[~duplicated_indices]
 
         first, idxes, array = True, [], None
 
@@ -51,7 +68,17 @@ def preprocess_historical(in_pqt, gridmet, gridmet_gfid, outdir, target_areas=No
 
             subarray = df[df['OPENET_ID'] == fid].copy()
             subarray = subarray.rename(columns=REMAP_COLS)[COLS]
-            subarray = subarray.reindex(met_df.index)
+
+            if not len(subarray) == expected_recs:
+                misshape_records[fid] = len(subarray)
+
+            try:
+                subarray = subarray.reindex(met_df.index)
+            except ValueError:
+                print(f'\nWarning: found {subarray.shape[0]} records in {fid}')
+                duplicated_indices = subarray.index.duplicated(keep='first')
+                subarray = subarray[~duplicated_indices]
+                subarray = subarray.reindex(met_df.index)
 
             subarray['eto'] = met_df['eto_mm_gm'].copy()
             subarray['ppt'] = met_df['prcp_mm_gm'].copy()
@@ -63,35 +90,15 @@ def preprocess_historical(in_pqt, gridmet, gridmet_gfid, outdir, target_areas=No
             idxes.append(fid)
             array[i, :, :] = subarray.values.reshape((1, len(subarray.index), len(REMAP_COLS)))
 
-        out_json = os.path.join(outdir, os.path.basename(in_pqt).replace('.parquet', '_index.json'))
         with open(out_json, 'w') as f:
             json.dump({'index': idxes}, f, indent=4)
 
-        out_npy = os.path.join(outdir, os.path.basename(in_pqt).replace('.parquet', '.npy'))
         np.save(out_npy, array)
-        print(f'saved {out_json}, len {len(idxes)}')
-        print(f'saved {out_npy}, shape: {array.shape}')
+        print(f'Hydro-Area {hydro_area}: saved {out_json}, len {len(idxes)}')
+        print(f'Hydro-Area {hydro_area}: saved {out_npy}, shape: {array.shape}')
 
-
-def split_etof_input(pqt, split_out, hyd_areas_file):
-    df = pd.read_parquet(pqt)
-
-    hyd_areas = df['HYD_AREA'].unique()
-    zones = []
-
-    for hyd in hyd_areas:
-        a = df[df['HYD_AREA'] == hyd].copy()
-        out_file = os.path.join(split_out, f'{hyd}.parquet')
-        a.to_parquet(out_file)
-        zones.append(hyd)
-        print(out_file)
-
-    with open(hyd_areas_file, 'w') as f:
-        json.dump({'tiles': zones}, f, indent=4)
-
-    print(hyd_areas_file)
-
-
+    with open(anomalous_recs_file, 'w') as f:
+        json.dump(misshape_records, f, indent=4)
 
 if __name__ == '__main__':
 
@@ -104,17 +111,19 @@ if __name__ == '__main__':
     fields_data = os.path.join(nv_data, 'fields_data')
     pqt_ = os.path.join(fields_data, 'NV_field_summaries_EToF_final_large.parquet')
     js_ = os.path.join(fields_data, 'NV_field_summaries_EToF_tiles.json')
-    pqt_dir = os.path.join(fields_data, 'fields_pqt')
-    split_etof_input(pqt_, pqt_dir, js_)
+    pqt_dir = os.path.join(fields_data, 'field_summaries')
 
-    npy_dir = os.path.join(fields_data, 'fields_npy')
     fields_gis = os.path.join(nv_data, 'fields_gis')
     nv_fields_boundaries = os.path.join(fields_gis, 'Nevada_Agricultural_Field_Boundaries_20250214')
     gridmet_factors_ = os.path.join(nv_fields_boundaries,
                                     'Nevada_Agricultural_Field_Boundaries_20250214_5071_GFID.csv')
 
+    npy_dir = os.path.join(fields_data, 'fields_npy')
     met = os.path.join(fields_data, 'gridmet')
 
-    preprocess_historical(pqt_dir, met, gridmet_factors_, npy_dir, target_areas=None)
+    mishhape_file = os.path.join(fields_data, 'unexpected_length_fields.json')
+
+    preprocess_historical(pqt_dir, met, gridmet_factors_, npy_dir, target_areas=None, overwrite=True,
+                          anomalous_recs_file=mishhape_file)
 
 # ========================= EOF ====================================================================
