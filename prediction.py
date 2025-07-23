@@ -17,7 +17,7 @@ MODEL_LIST = ['bcc-csm1-1', 'bcc-csm1-1-m', 'BNU-ESM', 'CanESM2', 'CCSM4',
 
 
 def project_net_et(correlations_csv_dir, historical_npy_dir,
-                   future_parquet_dir, out_dir, gfid_csv,
+                   future_parquet_dir, out_dir, gfid_csv, target_areas=None,
                    from_month=12, metric='cc'):
     """Projects future irrigation water use (IWU) based on historical models. For each agricultural field,
     this function identifies the best-performing historical regression model from the correlation analysis CSV build
@@ -41,6 +41,9 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
     hyd_areas = sorted(hyd_areas, key=lambda x: x[0])
 
     for hydro_area, npy_file in hyd_areas:
+
+        if target_areas and hydro_area not in target_areas:
+            continue
 
         corr_file = os.path.join(correlations_csv_dir, f'{hydro_area}.csv')
 
@@ -84,12 +87,16 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
             et_data = historical_data[:, :, COLS.index('cc')].copy() / historical_data[:, :, COLS.index('et')].copy()
             et_data[et_data < 0.] = 0.
 
+        elif metric == 'cu_eto':
+            et_data = historical_data[:, :, COLS.index('cc')].copy() / historical_data[:, :, COLS.index('eto')].copy()
+            et_data[et_data < 0.] = 0.
+
         else:
             raise ValueError
 
         # uncomment/use for comparison purposes
         iwu = pd.DataFrame(data=np.array(et_data).T, index=hist_dt_range, columns=field_index)
-        iwu = iwu.rolling(window=12, min_periods=12, closed='right').sum()
+        iwu = iwu.rolling(window=12, min_periods=12, closed='right').mean()
         iwu = iwu[iwu.index.month == from_month].loc[hist_dt_range[0]:]
 
         for i, field_id in enumerate(field_index):
@@ -161,13 +168,13 @@ if __name__ == '__main__':
     historical_npy_dir_ = os.path.join(nv_data_dir, 'fields_data', 'fields_npy')
     results_dir = os.path.join(nv_data_dir, 'fields_data', 'correlation_analysis')
 
-    calculation_type = 'cu_frac'
+    calculation_type = 'cu_eto'
     standardize_water_use = False
 
     if standardize_water_use:
         std_desc = 'standardized'
     else:
-        std_desc = 'rolling_sum'
+        std_desc = 'rolling_mean'
 
     correlations_csv_ = os.path.join(results_dir,  f'{calculation_type}_Fof_SPI', std_desc)
 
@@ -178,7 +185,7 @@ if __name__ == '__main__':
     gfid_fields_ = os.path.join(nv_fields_boundaries,
                                 'Nevada_Agricultural_Field_Boundaries_20250214_5071_GFID.csv')
 
-    projection_out_dir_ = os.path.join(nv_data_dir, 'fields_data', 'iwu_projections')
+    projection_out_dir_ = os.path.join(nv_data_dir, 'fields_data', 'iwu_projections', calculation_type)
     os.makedirs(projection_out_dir_, exist_ok=True)
 
     project_net_et(
@@ -187,6 +194,8 @@ if __name__ == '__main__':
         future_parquet_dir=future_data_dir_,
         metric=calculation_type,
         out_dir=projection_out_dir_,
-        gfid_csv=gfid_fields_)
+        gfid_csv=gfid_fields_,
+        target_areas='117'
+    )
 
 # ========================= EOF ====================================================================

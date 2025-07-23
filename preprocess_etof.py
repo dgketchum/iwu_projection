@@ -5,10 +5,11 @@ import geopandas as gpd
 import numpy as np
 from tqdm import tqdm
 
-REMAP_COLS = {'ETa_final_acre_ft': 'et', 'NetET_final_acre_ft': 'cc', 'PPT_MM': 'ppt',
-              'ETO_MM': 'eto', 'Eff_PPT_Adjusted_acre_ft': 'eff_ppt'}
+REMAP_COLS = {'ETA_MM': 'et', 'ETNET_MM': 'cc', 'PPT_MM': 'ppt',
+              'ETO_MM': 'eto', 'EFF_PPT_MM': 'eff_ppt'}
 
 COLS = ['et', 'cc', 'ppt', 'eto', 'eff_ppt']
+
 GRIDMET_RESAMPLE_MAP = {'year': 'first',
                         'month': 'first',
                         'day': 'first',
@@ -69,6 +70,9 @@ def preprocess_historical(in_pqt, gridmet, gridmet_gfid, outdir, target_areas=No
             subarray = df[df['OPENET_ID'] == fid].copy()
             subarray = subarray.rename(columns=REMAP_COLS)[COLS]
 
+            subarray.loc[subarray['cc'] < 0, 'cc'] = 0.0
+            subarray.loc[np.isnan(subarray['et']), 'et'] = 0.0
+
             if not len(subarray) == expected_recs:
                 misshape_records[fid] = len(subarray)
 
@@ -123,7 +127,7 @@ if __name__ == '__main__':
 
     mishhape_file = os.path.join(fields_data, 'unexpected_length_fields.json')
 
-    preprocess_historical(pqt_dir, met, gridmet_factors_, npy_dir, target_areas=None, overwrite=True,
+    preprocess_historical(pqt_dir, met, gridmet_factors_, npy_dir, target_areas='117', overwrite=True,
                           anomalous_recs_file=mishhape_file)
 
 # ========================= EOF ====================================================================

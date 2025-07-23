@@ -18,7 +18,7 @@ IDX_KWARGS = dict(distribution=indices.Distribution.gamma,
                   periodicity=compute.Periodicity.monthly)
 
 
-def correlations(npy_dir, out_dir, procs, metric, standardize_water_use):
+def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_areas=None):
     """Calculates and saves the correlation and linear regression coefficients
     between meteorological drought (SPI) and irrigation water use (IWU). For now,
     the only function to run a subsequent projection is calc='cc' and  standardize_water_use=False.
@@ -55,6 +55,9 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use):
 
     for hydro_area, npy_file in hyd_areas:
 
+        if target_areas and hydro_area not in target_areas:
+            continue
+
         print('\n', npy_file)
         js = npy_file.replace('.npy', '_index.json')
         input_array = np.load(npy_file)
@@ -79,6 +82,10 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use):
                 et_data = input_array[:, :, COLS.index('cc')].copy() / input_array[:, :, COLS.index('et')].copy()
                 et_data[et_data < 0.] = 0.
 
+            elif metric == 'cu_eto':
+                et_data = input_array[:, :, COLS.index('cc')].copy() / input_array[:, :, COLS.index('eto')].copy()
+                et_data[et_data < 0.] = 0.
+
             else:
                 raise ValueError
 
@@ -87,7 +94,7 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use):
 
             else:
                 iwu = pd.DataFrame(data=np.array(et_data).T, index=dt_range, columns=index)
-                iwu = iwu.rolling(window=12, min_periods=12, closed='right').sum()
+                iwu = iwu.rolling(window=12, min_periods=12, closed='right').mean()
                 iwu = iwu.values.T
 
             ppt = input_array[:, :, COLS.index('ppt')].copy()
@@ -148,7 +155,7 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use):
         if standardize_water_use:
             std_desc = 'standardized'
         else:
-            std_desc = 'rolling_sum'
+            std_desc = 'rolling_mean'
 
         odir =  os.path.join(out_dir, f'{metric}_Fof_SPI', std_desc)
 
@@ -239,6 +246,6 @@ if __name__ == '__main__':
     indir = os.path.join(nv_data, 'fields_data', 'fields_npy')
     odir_ = os.path.join(nv_data, 'fields_data', 'correlation_analysis')
 
-    correlations(indir, odir_, procs=6, metric='cu_frac', standardize_water_use=False)
+    correlations(indir, odir_, procs=1, metric='cu_eto', standardize_water_use=False, target_areas='117')
 
 # ========================= EOF ====================================================================
