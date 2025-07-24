@@ -69,6 +69,7 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_
         dt_range = [pd.to_datetime('{}-{}-01'.format(y, m)) for y in range(1980, 2025) for m in range(1, 13)]
         months = np.multiply(np.ones((len(index), len(dt_range))), np.array([dt.month for dt in dt_range]))
         series = {}
+
         for met_p in met_periods:
 
             if metric == 'kc':
@@ -94,6 +95,8 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_
 
             else:
                 iwu = pd.DataFrame(data=np.array(et_data).T, index=dt_range, columns=index)
+                # TODO: check if year-end resample is sufficient, and if this should be weighted
+                # iwu = iwu.resample('YE').mean()
                 iwu = iwu.rolling(window=12, min_periods=12, closed='right').mean()
                 iwu = iwu.values.T
 
@@ -124,6 +127,7 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_
                         pool_results_reg = [p.apply_async(linear_regression, args=(a_,)) for a_ in arrays]
                         lin_reg_coeffs = [res.get() for res in pool_results_reg]
                         lin_reg_coeffs = np.array([item for sublist in lin_reg_coeffs for item in sublist])
+
                 else:
                     corefs = np.array(pearsons_correlation(arrays[0]))
                     lin_reg_coeffs = np.array(linear_regression(arrays[0]))
@@ -131,6 +135,8 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_
                 slope = lin_reg_coeffs[:, 0]
                 intercept = lin_reg_coeffs[:, 1]
                 p_value = lin_reg_coeffs[:, 2]
+
+                # TODO: consider making use of the p-values!
 
                 col_corr = 'met{}_ag{}_fr{}_corr'.format(met_p, 12, from_month)
                 series[col_corr] = corefs

@@ -29,10 +29,14 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
         correlations_csv_dir (str): Path to the CSV with correlation and
             regression coefficient results from a previous analysis.
         historical_npy_dir (str): Directory containing historical .npy data.
+        future_parquet_dir (str): Directory containing future projections data in .parquet format
         out_dir (str): The directory where output projection files will be saved.
         gfid_csv (str): Path to a CSV file mapping field IDs to grid IDs (GFID).
         from_month (int, optional): The month of the year for which the
             analysis is performed. Defaults to 12.
+        metric (str): choice of water use proxy; cc: 'crop consumption' or netET, kc: crop coefficient (ETa/ETo),
+                        'cu_frac': netET/ETa, 'cu_eto': netET/ETo
+        target_areas (list): selection of hydrographic area codes to limit analysis to
 
     """
 
@@ -96,6 +100,8 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
 
         # uncomment/use for comparison purposes
         iwu = pd.DataFrame(data=np.array(et_data).T, index=hist_dt_range, columns=field_index)
+        # TODO: check if year-end resample is sufficient, and if this should be weighted
+        # iwu = iwu.resample('YE').mean()
         iwu = iwu.rolling(window=12, min_periods=12, closed='right').mean()
         iwu = iwu[iwu.index.month == from_month].loc[hist_dt_range[0]:]
 
@@ -119,6 +125,7 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
 
             for model_name in MODEL_LIST:
                 for scenario in FUTURE_SCENARIO_LIST:
+
                     future_col_name = f'{scenario}_{model_name}'
                     ppt_col_name = f'{future_col_name}_ppt'
 
@@ -143,6 +150,7 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
                     future_spi_for_month = s_spi[s_spi.index.month == from_month].loc[future_dt_range[0]:]
 
                     projected_iwu = model_params['slope'] * future_spi_for_month + model_params['intercept']
+                    # TODO: go ahead and evaluate netET and write the field-specific eto, ppt, etc (?)
                     projected_iwu.name = f'{model_name}_{scenario}'
                     field_projections.append(projected_iwu)
 
