@@ -52,6 +52,7 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_
     hyd_areas = sorted(hyd_areas, key=lambda x: x[0])
 
     met_periods = [12, 18, 24, 30, 36]
+    lookback_months = [10]
 
     for hydro_area, npy_file in hyd_areas:
 
@@ -74,18 +75,17 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_
 
             if metric == 'kc':
                 et_data = input_array[:, :, COLS.index('et')].copy() / input_array[:, :, COLS.index('eto')].copy()
+                weighting = True
 
             elif metric == 'cc':
                 et_data = input_array[:, :, COLS.index('cc')].copy()
                 et_data[et_data < 0.] = 0.
-
-            elif metric == 'cu_frac':
-                et_data = input_array[:, :, COLS.index('cc')].copy() / input_array[:, :, COLS.index('et')].copy()
-                et_data[et_data < 0.] = 0.
+                weighting = False
 
             elif metric == 'cu_eto':
                 et_data = input_array[:, :, COLS.index('cc')].copy() / input_array[:, :, COLS.index('eto')].copy()
                 et_data[et_data < 0.] = 0.
+                weighting = True
 
             else:
                 raise ValueError
@@ -95,9 +95,17 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_
 
             else:
                 iwu = pd.DataFrame(data=np.array(et_data).T, index=dt_range, columns=index)
-                # TODO: check if year-end resample is sufficient, and if this should be weighted
-                # iwu = iwu.resample('YE').mean()
-                iwu = iwu.rolling(window=12, min_periods=12, closed='right').mean()
+
+                if weighting:
+                    eto = pd.DataFrame(data=np.array(input_array[:, :, COLS.index('eto')]).T,
+                                         index=dt_range, columns=index)
+                    eto[eto < 0.] = 0.
+                    weights = eto / eto.rolling(window=12, min_periods=12, closed='right').sum()
+                    iwu = (iwu * weights).rolling(window=12, min_periods=12, closed='right').sum()
+
+                else:
+                    iwu = iwu.rolling(window=12, min_periods=12, closed='right').mean()
+
                 iwu = iwu.values.T
 
             ppt = input_array[:, :, COLS.index('ppt')].copy()
@@ -106,8 +114,8 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_
 
             stack = np.stack([iwu[:, -len(dt_range):], spi[:, -len(dt_range):], months])
 
-            # looking back from the end of a growing season
-            for from_month in range(12, 13):
+            # looking back from the end of a growing season/end of calendar year/ water year etc.
+            for from_month in lookback_months:
 
                 d_unmasked = stack[:, stack[2] == float(from_month)].copy().reshape((3, len(index), -1))
                 mx = np.ma.masked_array(np.repeat(np.isnan(d_unmasked[:1, :, :]), 3, axis=0))
@@ -174,6 +182,7 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_
             df[k] = v
 
         df.to_csv(ofile)
+        print(f'wrote {ofile}')
 
 
 def split(a, n):
@@ -252,6 +261,10 @@ if __name__ == '__main__':
     indir = os.path.join(nv_data, 'fields_data', 'fields_npy')
     odir_ = os.path.join(nv_data, 'fields_data', 'correlation_analysis')
 
-    correlations(indir, odir_, procs=1, metric='cu_eto', standardize_water_use=False, target_areas='117')
+    targets = None
+
+    correlations(indir, odir_, procs=1, metric='cc', standardize_water_use=False, target_areas=targets)
+    correlations(indir, odir_, procs=1, metric='kc', standardize_water_use=False, target_areas=targets)
+    correlations(indir, odir_, procs=1, metric='cu_eto', standardize_water_use=False, target_areas=targets)
 
 # ========================= EOF ====================================================================

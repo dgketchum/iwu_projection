@@ -17,7 +17,8 @@ MODEL_LIST = ['bcc-csm1-1', 'bcc-csm1-1-m', 'BNU-ESM', 'CanESM2', 'CCSM4',
 
 
 def project_net_et(correlations_csv_dir, historical_npy_dir,
-                   future_parquet_dir, out_dir, gfid_csv, target_areas=None,
+                   future_parquet_dir, out_dir, gfid_csv,
+                   target_areas=None, weighted=False,
                    from_month=12, metric='cc'):
     """Projects future irrigation water use (IWU) based on historical models. For each agricultural field,
     this function identifies the best-performing historical regression model from the correlation analysis CSV build
@@ -80,31 +81,6 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
 
         hist_dt_range = pd.to_datetime([f'{y}-{m}-01' for y in range(1980, 2025) for m in range(1, 13)])
 
-        if metric == 'kc':
-            et_data = historical_data[:, :, COLS.index('et')].copy() / historical_data[:, :, COLS.index('eto')].copy()
-
-        elif metric == 'cc':
-            et_data = historical_data[:, :, COLS.index('cc')].copy()
-            et_data[et_data < 0.] = 0.
-
-        elif metric == 'cu_frac':
-            et_data = historical_data[:, :, COLS.index('cc')].copy() / historical_data[:, :, COLS.index('et')].copy()
-            et_data[et_data < 0.] = 0.
-
-        elif metric == 'cu_eto':
-            et_data = historical_data[:, :, COLS.index('cc')].copy() / historical_data[:, :, COLS.index('eto')].copy()
-            et_data[et_data < 0.] = 0.
-
-        else:
-            raise ValueError
-
-        # uncomment/use for comparison purposes
-        iwu = pd.DataFrame(data=np.array(et_data).T, index=hist_dt_range, columns=field_index)
-        # TODO: check if year-end resample is sufficient, and if this should be weighted
-        # iwu = iwu.resample('YE').mean()
-        iwu = iwu.rolling(window=12, min_periods=12, closed='right').mean()
-        iwu = iwu[iwu.index.month == from_month].loc[hist_dt_range[0]:]
-
         for i, field_id in enumerate(field_index):
 
             if field_id not in best_models:
@@ -123,22 +99,44 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
             model_params = best_models[field_id]
             met_p = model_params['met_p']
 
+            first = True
+
             for model_name in MODEL_LIST:
                 for scenario in FUTURE_SCENARIO_LIST:
 
                     future_col_name = f'{scenario}_{model_name}'
+
                     ppt_col_name = f'{future_col_name}_ppt'
+                    eto_col_name = f'{future_col_name}_eto'
 
                     if ppt_col_name not in future_field_df.columns:
                         continue
 
-                    historical_ppt = historical_data[i, :, COLS.index('ppt')]
                     future_ppt_series = future_field_df[ppt_col_name]
                     future_ppt = future_ppt_series.values
                     future_dt_range = future_ppt_series.index
+                    full_dt_range = hist_dt_range.union(future_dt_range)
+
+                    historical_ppt = historical_data[i, :, COLS.index('ppt')]
+
+                    if first:
+                        historical_ppt = pd.Series(historical_ppt, index=hist_dt_range)
+                        historical_ppt.name = 'historical_ppt'
+                        field_projections.append(historical_ppt)
+
+                        historical_eto = historical_data[i, :, COLS.index('eto')]
+                        historical_eto = pd.Series(historical_eto, index=hist_dt_range)
+                        historical_eto.name = 'historical_eto'
+                        field_projections.append(historical_eto)
+
+                        historical_netet = historical_data[i, :, COLS.index('cc')]
+                        historical_netet = pd.Series(historical_netet, index=hist_dt_range)
+                        historical_netet.name = 'historical_netET'
+                        field_projections.append(historical_netet)
+
+                        first = False
 
                     full_ppt = np.concatenate([historical_ppt, future_ppt])
-                    full_dt_range = hist_dt_range.union(future_dt_range)
 
                     spi = indices.spi(full_ppt, scale=met_p, distribution=indices.Distribution.gamma,
                                       data_start_year=hist_dt_range.year[0],
@@ -149,19 +147,34 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
                     s_spi = pd.Series(spi, index=full_dt_range)
                     future_spi_for_month = s_spi[s_spi.index.month == from_month].loc[future_dt_range[0]:]
 
-                    projected_iwu = model_params['slope'] * future_spi_for_month + model_params['intercept']
-                    # TODO: go ahead and evaluate netET and write the field-specific eto, ppt, etc (?)
-                    projected_iwu.name = f'{model_name}_{scenario}'
-                    field_projections.append(projected_iwu)
+                    preditced_et_metric = model_params['slope'] * future_spi_for_month + model_params['intercept']
+
+                    future_eto_series = future_field_df[eto_col_name]
+                    eto_rolling = future_eto_series.rolling(window=12, min_periods=12, closed='right').sum()
+                    future_eto_annual = eto_rolling[eto_rolling.index.month == from_month].loc[future_dt_range[0]:]
+                    future_eto_series.name = f'{model_name}_{scenario}_eto'
+                    field_projections.append(future_eto_series)
+
+                    if weighted:
+                        predicted_cc = preditced_et_metric * future_eto_annual
+                    else:
+                        predicted_cc = preditced_et_metric
+
+                    predicted_cc.name = f'{model_name}_{scenario}_netET'
+                    field_projections.append(predicted_cc)
+
+                    s_spi.name = f'{model_name}_{scenario}_spi'
+                    field_projections.append(s_spi.loc[future_dt_range])
+
+                    future_ppt_series.name = f'{model_name}_{scenario}_ppt'
+                    field_projections.append(future_ppt_series)
 
             if not field_projections:
                 continue
 
             projection_df = pd.concat(field_projections, axis=1)
-            projection_df.index = projection_df.index.year
-            projection_df.index.name = 'Year'
 
-            output_filename = os.path.join(out_dir, f'projected_{metric}_{field_id}.csv')
+            output_filename = os.path.join(out_dir, f'projected_{metric}_{field_id}.parquet')
             projection_df.to_csv(output_filename)
 
             print(f"{output_filename} {projection_df.shape}")
@@ -176,34 +189,44 @@ if __name__ == '__main__':
     historical_npy_dir_ = os.path.join(nv_data_dir, 'fields_data', 'fields_npy')
     results_dir = os.path.join(nv_data_dir, 'fields_data', 'correlation_analysis')
 
-    calculation_type = 'cu_eto'
-    standardize_water_use = False
+    calculation_types = ['kc', 'cc', 'cu_eto']
 
-    if standardize_water_use:
-        std_desc = 'standardized'
-    else:
-        std_desc = 'rolling_mean'
+    for calculation_type in calculation_types:
 
-    correlations_csv_ = os.path.join(results_dir,  f'{calculation_type}_Fof_SPI', std_desc)
+        if calculation_type == 'cc':
+            weighted_ = False
+        else:
+            weighted_ = True
 
-    future_data_dir_ = os.path.join(nv_data_dir, 'fields_data', 'maca', 'processed')
+        standardize_water_use = False
 
-    fields_gis = os.path.join(nv_data_dir, 'fields_gis')
-    nv_fields_boundaries = os.path.join(fields_gis, 'Nevada_Agricultural_Field_Boundaries_20250214')
-    gfid_fields_ = os.path.join(nv_fields_boundaries,
-                                'Nevada_Agricultural_Field_Boundaries_20250214_5071_GFID.csv')
+        if standardize_water_use:
+            std_desc = 'standardized'
+        else:
+            std_desc = 'rolling_mean'
 
-    projection_out_dir_ = os.path.join(nv_data_dir, 'fields_data', 'iwu_projections', calculation_type)
-    os.makedirs(projection_out_dir_, exist_ok=True)
+        correlations_csv_ = os.path.join(results_dir, f'{calculation_type}_Fof_SPI', std_desc)
 
-    project_net_et(
-        correlations_csv_dir=correlations_csv_,
-        historical_npy_dir=historical_npy_dir_,
-        future_parquet_dir=future_data_dir_,
-        metric=calculation_type,
-        out_dir=projection_out_dir_,
-        gfid_csv=gfid_fields_,
-        target_areas='117'
-    )
+        future_data_dir_ = os.path.join(nv_data_dir, 'fields_data', 'maca', 'processed')
+
+        fields_gis = os.path.join(nv_data_dir, 'fields_gis')
+        nv_fields_boundaries = os.path.join(fields_gis, 'Nevada_Agricultural_Field_Boundaries_20250214')
+        gfid_fields_ = os.path.join(nv_fields_boundaries,
+                                    'Nevada_Agricultural_Field_Boundaries_20250214_5071_GFID.csv')
+
+        projection_out_dir_ = os.path.join(nv_data_dir, 'fields_data', 'iwu_projections', calculation_type)
+        os.makedirs(projection_out_dir_, exist_ok=True)
+
+        project_net_et(
+            correlations_csv_dir=correlations_csv_,
+            historical_npy_dir=historical_npy_dir_,
+            future_parquet_dir=future_data_dir_,
+            from_month=10,
+            weighted=weighted_,
+            metric=calculation_type,
+            out_dir=projection_out_dir_,
+            gfid_csv=gfid_fields_,
+            target_areas='117',
+        )
 
 # ========================= EOF ====================================================================

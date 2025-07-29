@@ -127,7 +127,7 @@ if __name__ == '__main__':
 
     mishhape_file = os.path.join(fields_data, 'unexpected_length_fields.json')
 
-    preprocess_historical(pqt_dir, met, gridmet_factors_, npy_dir, target_areas='117', overwrite=True,
+    preprocess_historical(pqt_dir, met, gridmet_factors_, npy_dir, target_areas=None, overwrite=True,
                           anomalous_recs_file=mishhape_file)
 
 # ========================= EOF ====================================================================
