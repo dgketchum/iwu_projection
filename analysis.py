@@ -144,8 +144,6 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_
                 intercept = lin_reg_coeffs[:, 1]
                 p_value = lin_reg_coeffs[:, 2]
 
-                # TODO: consider making use of the p-values!
-
                 col_corr = 'met{}_ag{}_fr{}_corr'.format(met_p, 12, from_month)
                 series[col_corr] = corefs
                 print(f'{col_corr:30} correlation: {np.nanmin(corefs):.4f} to {np.nanmax(corefs):.4f}')
