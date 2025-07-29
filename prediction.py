@@ -67,11 +67,15 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
 
             slope_col = best_corr_col.replace('_corr', '_slope')
             intercept_col = best_corr_col.replace('_corr', '_intercept')
+            pval_col = best_corr_col.replace('_corr', '_pvalue')
+            corr_col = best_corr_col.replace('_corr', '_corr')
 
             best_models[field_id] = {
                 'met_p': met_p,
                 'slope': correlations_df.loc[field_id, slope_col],
-                'intercept': correlations_df.loc[field_id, intercept_col]
+                'correlation': correlations_df.loc[field_id, corr_col],
+                'intercept': correlations_df.loc[field_id, intercept_col],
+                'pvalue': correlations_df.loc[field_id, pval_col]
             }
 
         historical_data = np.load(npy_file)
@@ -134,6 +138,14 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
                         historical_netet.name = 'historical_netET'
                         field_projections.append(historical_netet)
 
+                        historical_netet_rolling = historical_netet.rolling(window=12, min_periods=12,
+                                                                            closed='right').sum()
+                        historical_netet_wye = historical_netet_rolling[
+                            historical_netet_rolling.index.month == from_month]
+                        historical_netet_wye = pd.Series(historical_netet_wye, index=hist_dt_range)
+                        historical_netet_wye.name = 'historical_netet_wye'
+                        field_projections.append(historical_netet_wye)
+
                         first = False
 
                     full_ppt = np.concatenate([historical_ppt, future_ppt])
@@ -175,7 +187,18 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
             projection_df = pd.concat(field_projections, axis=1)
 
             output_filename = os.path.join(out_dir, f'projected_{metric}_{field_id}.parquet')
-            projection_df.to_csv(output_filename)
+
+            # print(f'\n\n{metric} {field_id}')
+            # print(f'{field_id} historical water year end netET: {historical_netet_wye.mean()}')
+            # print(f'{field_id} projection correlation: {model_params["correlation"]}')
+            # print(f'{field_id} projection p-value: {model_params["pvalue"]}')
+            #
+            # rcp45 = np.nanmean(projection_df[[c for c in projection_df.columns if 'rcp45_netET' in c]].values)
+            # print(f'{field_id} projected mean RCP 4.5 netET: {rcp45}')
+            # rcp85 = np.nanmean(projection_df[[c for c in projection_df.columns if 'rcp85_netET' in c]].values)
+            # print(f'{field_id} projected mean RCP 8.5 netET: {rcp85}')
+
+            projection_df.to_parquet(output_filename)
 
             print(f"{output_filename} {projection_df.shape}")
 
