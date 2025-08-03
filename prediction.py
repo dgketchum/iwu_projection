@@ -1,8 +1,9 @@
 import json
 import os
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy import stats
 from climate_indices import compute, indices
 
 COLS = ['et', 'cc', 'ppt', 'eto', 'eff_ppt']
@@ -19,27 +20,51 @@ MODEL_LIST = ['bcc-csm1-1', 'bcc-csm1-1-m', 'BNU-ESM', 'CanESM2', 'CCSM4',
 def project_net_et(correlations_csv_dir, historical_npy_dir,
                    future_parquet_dir, out_dir, gfid_csv,
                    target_areas=None, weighted=False,
-                   from_month=12, metric='cc'):
-    """Projects future irrigation water use (IWU) based on historical models. For each agricultural field,
-    this function identifies the best-performing historical regression model from the correlation analysis CSV build
-    in analysis.py. Best performing in this context only means highest correlation, positive or negative. It then
-    applies this model to future precipitation projections (SPI) to predict future IWU. The projections for all
-    climate models and scenarios are saved to a separate CSV file for each field.
+                   from_month=12, metric='cc', plot_dir=None):
+    """Projects future water use for fields using historical drought-response models.
 
-    Args:
-        correlations_csv_dir (str): Path to the CSV with correlation and
-            regression coefficient results from a previous analysis.
-        historical_npy_dir (str): Directory containing historical .npy data.
-        future_parquet_dir (str): Directory containing future projections data in .parquet format
-        out_dir (str): The directory where output projection files will be saved.
-        gfid_csv (str): Path to a CSV file mapping field IDs to grid IDs (GFID).
-        from_month (int, optional): The month of the year for which the
-            analysis is performed. Defaults to 12.
-        metric (str): choice of water use proxy; cc: 'crop consumption' or netET, kc: crop coefficient (ETa/ETo),
-                        'cu_frac': netET/ETa, 'cu_eto': netET/ETo
-        target_areas (list): selection of hydrographic area codes to limit analysis to
+        For each agricultural field, this function applies a previously developed statistical
+        model to project future agricultural water use (e.g., net crop consumptive use).
+        The process is as follows:
 
-    """
+        1.  For a given field, it identifies the "best" historical linear regression model
+            from the correlation analysis results. The "best" model is defined as the one
+            with the highest absolute correlation between a historical water use metric
+            and the Standardized Precipitation Index (SPI) at a specific timescale.
+        2.  It loads the future climate projections (precipitation and ETo) for that
+            field's location, which cover multiple climate models (GCMs) and scenarios (RCPs).
+        3.  For each GCM/scenario, it calculates a continuous SPI time series across the
+            combined historical and future period, ensuring the SPI is calibrated only on
+            the historical data.
+        4.  It applies the field's best-fit linear model (y = slope * x + intercept) to the
+            future SPI values (x) to predict the future annual water use metric (y).
+        5.  It saves a comprehensive Parquet file for the field, containing the historical
+            data, all future climate driver data (PPT, ETo, SPI), and the final projected
+            water use for every model and scenario.
+
+        Args:
+            correlations_csv_dir (str): Path to the directory containing the CSV files with
+                correlation and regression coefficients from the analysis step.
+            historical_npy_dir (str): Path to the directory containing the historical
+                .npy data arrays and their corresponding .json index files.
+            future_parquet_dir (str): Path to the directory containing the processed future
+                climate projections as location-specific .parquet files.
+            out_dir (str): The root directory where output projection files will be saved.
+            gfid_csv (str): Path to a CSV file that maps field OPENET_IDs to their
+                corresponding location GFIDs.
+            target_areas (list, optional): A list of hydrographic area codes to process.
+                If None, all available areas will be processed. Defaults to None.
+            weighted (bool, optional): If True, the predicted water use metric (which is
+                assumed to be a ratio like 'kc') is multiplied by the annual future ETo
+                to yield an absolute consumptive use value. Defaults to False.
+            from_month (int, optional): The end-of-season month used to extract annual
+                values from the time series (e.g., 10 for October). Defaults to 12.
+            metric (str, optional): The water use metric being projected, used for naming
+                output files. Defaults to 'cc'.
+
+        Returns:
+            None. The function writes projection results to Parquet files.
+        """
 
     hyd_areas = [(f.split('.')[0], os.path.join(historical_npy_dir, f)) for f in
                  os.listdir(historical_npy_dir) if f.endswith('.npy')]
@@ -95,7 +120,11 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
                 field_parquet_path = os.path.join(future_parquet_dir, f'{field_gfid}.parquet.gz')
                 if not os.path.exists(field_parquet_path):
                     continue
+                # to get rolling data in 2025 we need an extra year
                 future_field_df = pd.read_parquet(field_parquet_path)
+                # spi calculation is on joined time series and must not overlap
+                future_field_df_trunc = future_field_df.loc[
+                    [i for i in future_field_df.index if i not in hist_dt_range]]
             except (KeyError, FileNotFoundError):
                 continue
 
@@ -108,15 +137,18 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
             for model_name in MODEL_LIST:
                 for scenario in FUTURE_SCENARIO_LIST:
 
+                    # if model_name != 'HadGEM2-CC365':
+                    #     continue
+
                     future_col_name = f'{scenario}_{model_name}'
 
                     ppt_col_name = f'{future_col_name}_ppt'
-                    eto_col_name = f'{future_col_name}_eto'
+                    eto_col_name = f'{future_col_name}_eto_corrected'
 
                     if ppt_col_name not in future_field_df.columns:
-                        continue
+                        raise ValueError
 
-                    future_ppt_series = future_field_df[ppt_col_name]
+                    future_ppt_series = future_field_df_trunc[ppt_col_name]
                     future_ppt = future_ppt_series.values
                     future_dt_range = future_ppt_series.index
                     full_dt_range = hist_dt_range.union(future_dt_range)
@@ -133,17 +165,30 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
                         historical_eto.name = 'historical_eto'
                         field_projections.append(historical_eto)
 
-                        historical_netet = historical_data[i, :, COLS.index('cc')]
-                        historical_netet = pd.Series(historical_netet, index=hist_dt_range)
-                        historical_netet.name = 'historical_netET'
-                        field_projections.append(historical_netet)
+                        if metric == 'kc':
+                            historical_iwu = historical_data[i, :, COLS.index('et')]
+                            historical_iwu = pd.Series(historical_iwu, index=hist_dt_range)
+                            historical_iwu.name = 'historical_ETa'
 
-                        historical_netet_rolling = historical_netet.rolling(window=12, min_periods=12,
-                                                                            closed='right').sum()
+                        else:
+                            historical_iwu = historical_data[i, :, COLS.index('cc')]
+                            historical_iwu = pd.Series(historical_iwu, index=hist_dt_range)
+                            historical_iwu.name = 'historical_netET'
+
+                        historical_iwu = pd.Series(historical_iwu, index=hist_dt_range)
+                        field_projections.append(historical_iwu)
+
+                        historical_netet_rolling = historical_iwu.rolling(window=12, min_periods=12,
+                                                                          closed='right').sum()
                         historical_netet_wye = historical_netet_rolling[
                             historical_netet_rolling.index.month == from_month]
                         historical_netet_wye = pd.Series(historical_netet_wye, index=hist_dt_range)
-                        historical_netet_wye.name = 'historical_netet_wye'
+
+                        if metric == 'kc':
+                            historical_netet_wye.name = 'historical_eta_wye'
+                        else:
+                            historical_netet_wye.name = 'historical_netet_wye'
+
                         field_projections.append(historical_netet_wye)
 
                         first = False
@@ -164,16 +209,20 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
                     future_eto_series = future_field_df[eto_col_name]
                     eto_rolling = future_eto_series.rolling(window=12, min_periods=12, closed='right').sum()
                     future_eto_annual = eto_rolling[eto_rolling.index.month == from_month].loc[future_dt_range[0]:]
-                    future_eto_series.name = f'{model_name}_{scenario}_eto'
+                    future_eto_series.name = f'{model_name}_{scenario}_eto_corrected'
                     field_projections.append(future_eto_series)
 
                     if weighted:
-                        predicted_cc = preditced_et_metric * future_eto_annual
+                        predicted_iwu = preditced_et_metric * future_eto_annual
                     else:
-                        predicted_cc = preditced_et_metric
+                        predicted_iwu = preditced_et_metric
 
-                    predicted_cc.name = f'{model_name}_{scenario}_netET'
-                    field_projections.append(predicted_cc)
+                    if metric == 'kc':
+                        predicted_iwu.name = f'{model_name}_{scenario}_ETa'
+                    else:
+                        predicted_iwu.name = f'{model_name}_{scenario}_netET'
+
+                    field_projections.append(predicted_iwu)
 
                     s_spi.name = f'{model_name}_{scenario}_spi'
                     field_projections.append(s_spi.loc[future_dt_range])
@@ -188,19 +237,65 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
 
             output_filename = os.path.join(out_dir, f'projected_{metric}_{field_id}.parquet')
 
-            # print(f'\n\n{metric} {field_id}')
-            # print(f'{field_id} historical water year end netET: {historical_netet_wye.mean()}')
-            # print(f'{field_id} projection correlation: {model_params["correlation"]}')
-            # print(f'{field_id} projection p-value: {model_params["pvalue"]}')
-            #
-            # rcp45 = np.nanmean(projection_df[[c for c in projection_df.columns if 'rcp45_netET' in c]].values)
-            # print(f'{field_id} projected mean RCP 4.5 netET: {rcp45}')
-            # rcp85 = np.nanmean(projection_df[[c for c in projection_df.columns if 'rcp85_netET' in c]].values)
-            # print(f'{field_id} projected mean RCP 8.5 netET: {rcp85}')
+            if plot_dir:
+                print(f'\n\n{metric} {field_id}')
+                print(f'{field_id} historical water year end IWU: {historical_netet_wye.mean()}')
+                print(f'{field_id} projection correlation: {model_params["correlation"]}')
+                print(f'{field_id} projection p-value: {model_params["pvalue"]}')
+
+                rcp45 = np.nanmean(projection_df[[c for c in projection_df.columns if 'rcp45_netET' in c]].values)
+                print(f'{field_id} projected mean RCP 4.5 netET: {rcp45}')
+                rcp85 = np.nanmean(projection_df[[c for c in projection_df.columns if 'rcp85_netET' in c]].values)
+                print(f'{field_id} projected mean RCP 8.5 netET: {rcp85}')
+
+                plot_water_use_projection(projection_df, field_id, metric, out_dir=plot_dir)
 
             projection_df.to_parquet(output_filename)
 
             print(f"{output_filename} {projection_df.shape}")
+
+
+def plot_water_use_projection(projection_df, field_id, metric, out_dir):
+    plt.style.use('seaborn-v0_8-whitegrid')
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    if metric == 'kc':
+        hist_col = 'historical_eta_wye'
+        future_col_suffix = '_ETa'
+    else:
+        hist_col = 'historical_netet_wye'
+        future_col_suffix = '_netET'
+
+    historical_data = projection_df[[hist_col]].dropna()
+    ax.plot(historical_data.index, historical_data[hist_col],
+            label='Historical', color='black', linewidth=2)
+
+    colors = {'rcp45': 'dodgerblue', 'rcp85': 'firebrick'}
+    for scenario in FUTURE_SCENARIO_LIST:
+        future_cols = [c for c in projection_df.columns if f'{scenario}{future_col_suffix}' in c]
+        future_df = projection_df[future_cols].dropna(how='all')
+
+        mean_projection = future_df.mean(axis=1)
+        std_projection = future_df.std(axis=1)
+        upper_bound = mean_projection + std_projection
+        lower_bound = mean_projection - std_projection
+
+        ax.plot(mean_projection.index, mean_projection,
+                label=f'Mean {scenario.upper()}', color=colors[scenario], linestyle='--')
+
+        ax.fill_between(future_df.index, lower_bound, upper_bound,
+                        color=colors[scenario], alpha=0.2, label=f'{scenario.upper()} Range (±1σ)')
+
+    ax.set_title(f'{metric.upper()}-based Historical and Projected Water Use for Field: {field_id}', fontsize=16)
+    ax.set_xlabel('Year', fontsize=12)
+    ax.set_ylabel(f'Annual Water Use ({metric.upper()})', fontsize=12)
+    ax.legend(loc='best')
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.tight_layout()
+
+    plot_filename = os.path.join(out_dir, f'projection_plot_{metric}_{field_id}.png')
+    plt.savefig(plot_filename, dpi=300)
+    plt.close(fig)
 
 
 if __name__ == '__main__':
@@ -212,7 +307,7 @@ if __name__ == '__main__':
     historical_npy_dir_ = os.path.join(nv_data_dir, 'fields_data', 'fields_npy')
     results_dir = os.path.join(nv_data_dir, 'fields_data', 'correlation_analysis')
 
-    calculation_types = ['kc', 'cc', 'cu_eto']
+    calculation_types = ['cc', 'kc', 'cu_eto']
 
     for calculation_type in calculation_types:
 
@@ -240,6 +335,9 @@ if __name__ == '__main__':
         projection_out_dir_ = os.path.join(nv_data_dir, 'fields_data', 'iwu_projections', calculation_type)
         os.makedirs(projection_out_dir_, exist_ok=True)
 
+        projection_plot_dir_ = os.path.join(nv_data_dir, 'fields_data', 'iwu_projection_plots', calculation_type)
+        os.makedirs(projection_plot_dir_, exist_ok=True)
+
         project_net_et(
             correlations_csv_dir=correlations_csv_,
             historical_npy_dir=historical_npy_dir_,
@@ -250,6 +348,7 @@ if __name__ == '__main__':
             out_dir=projection_out_dir_,
             gfid_csv=gfid_fields_,
             target_areas='117',
+            plot_dir=None,
         )
 
 # ========================= EOF ====================================================================

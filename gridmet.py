@@ -14,7 +14,7 @@ import pyproj
 import pynldas2 as nld
 from rasterstats import zonal_stats
 
-from dri.thredds import GridMet
+from thredds import GridMet
 
 CLIMATE_COLS = {
     'pet': {
@@ -25,10 +25,19 @@ CLIMATE_COLS = {
         'nc': 'agg_met_pr_1979_CurrentYear_CONUS',
         'var': 'precipitation_amount',
         'col': 'prcp_mm'},
+    'tmmx': {
+        'nc': 'agg_met_tmmx_1979_CurrentYear_CONUS',
+        'var': 'daily_maximum_temperature',
+        'col': 'tmax'},
+    'tmmn': {
+        'nc': 'agg_met_tmmn_1979_CurrentYear_CONUS',
+        'var': 'daily_minimum_temperature',
+        'col': 'tmin'},
 }
 
 GRIDMET_GET = ['elev_m',
-
+               'tmin',
+               'tmax',
                'eto_mm',
                'prcp_mm',
                ]
@@ -241,6 +250,60 @@ def download_gridmet(fields, gridmet_factors, gridmet_csv_dir, start=None, end=N
             return df
 
 
+def add_gridmet_cols(fields, gridmet_factors, gridmet_csv_dir, cols_to_add,
+                     feature_id='FID', overwrite_existing_cols=False):
+
+    fields_gdf = gpd.read_file(fields)
+    fields_gdf.index = fields_gdf[feature_id]
+
+    with open(gridmet_factors, 'r') as f:
+        factors = json.load(f)
+
+    unique_gfids = fields_gdf['GFID'].dropna().unique()
+    unique_gfids = [str(int(g)) for g in unique_gfids]
+
+    for g_fid in tqdm(unique_gfids, desc="Adding columns to GridMET files"):
+        _file = os.path.join(gridmet_csv_dir, f'gridmet_{g_fid}.csv')
+
+        if not os.path.exists(_file):
+            continue
+
+        df = pd.read_csv(_file, parse_dates=True, index_col='date')
+
+        if df.empty:
+            continue
+
+        start_date = df.index.min().strftime('%Y-%m-%d')
+        end_date = df.index.max().strftime('%Y-%m-%d')
+
+        r = factors[g_fid]
+        lat, lon = r['lat'], r['lon']
+        df_modified = False
+
+        for thredds_var in cols_to_add:
+            if thredds_var not in CLIMATE_COLS:
+                continue
+
+            col_info = CLIMATE_COLS[thredds_var]
+            variable_name = col_info['col']
+
+            if variable_name in df.columns and not overwrite_existing_cols:
+                continue
+
+            g = GridMet(thredds_var, start=start_date, end=end_date, lat=lat, lon=lon)
+            series = g.get_point_timeseries()
+            df[variable_name] = series[thredds_var]
+            df_modified = True
+
+        if df_modified:
+            current_cols = df.columns.tolist()
+            new_order = [c for c in COLUMN_ORDER if c in current_cols]
+            other_cols = [c for c in current_cols if c not in new_order]
+            final_order = new_order + other_cols
+            df = df[final_order]
+            df.to_csv(_file, index=True, index_label='date')
+
+
 if __name__ == '__main__':
     ''''''
 
@@ -267,9 +330,11 @@ if __name__ == '__main__':
 
     met = os.path.join(data, 'gridmet')
 
-    run_zonal_stats_for_fields(fields_gridmet, gridmet_centroids, correction_tifs,
-                               gridmet_factors, field_select=None, feature_id='FID')
+    # run_zonal_stats_for_fields(fields_gridmet, gridmet_centroids, correction_tifs,
+    #                            gridmet_factors, field_select=None, feature_id='FID')
 
-    download_gridmet(fields_gridmet, gridmet_factors, met, start='1980-01-01', end='2024-12-31',
-                     overwrite=False, feature_id=FEATURE_ID, target_fields=None)
+    # download_gridmet(fields_gridmet, gridmet_factors, met, start='1980-01-01', end='2024-12-31',
+    #                  overwrite=False, feature_id=FEATURE_ID, target_fields=None)
+
+    add_gridmet_cols(fields_gridmet, gridmet_factors, met, feature_id=FEATURE_ID, cols_to_add=['tmmx', 'tmmn'])
 # ========================= EOF ====================================================================

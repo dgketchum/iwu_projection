@@ -24,6 +24,46 @@ GRIDMET_RESAMPLE_MAP = {'year': 'first',
 def preprocess_historical(in_pqt, gridmet, gridmet_gfid, outdir, target_areas=None, overwrite=False,
                           anomalous_recs_file=None, expected_recs=480):
 
+    """Processes and merges historical water use data with GridMET climate data.
+
+        This function iterates through hydrographic areas and their associated agricultural
+        fields. For each field, it loads the historical consumptive use data (from ET Demands)
+        and the corresponding daily GridMET climate data.
+
+        The core process involves:
+        1. Resampling the daily GridMET data to a monthly time step.
+        2. Aligning the field's consumptive use data to the same monthly index.
+        3. Replacing the precipitation and reference ET in the field data with the
+           standardized values from GridMET.
+        4. Stacking the final time series for all fields within a hydrographic area
+           into a 3D NumPy array.
+
+        The output for each hydrographic area consists of two files: a .npy file
+        containing the numerical data array and a .json file that provides an index
+        mapping the array's first dimension to the specific field IDs.
+
+        Args:
+            in_pqt (str): Path to the directory containing input parquet files, where each
+                file represents a hydrographic area and contains ET Demands model output.
+            gridmet (str): Path to the directory containing daily GridMET climate data as
+                CSV files, named by their GridMET ID (e.g., 'gridmet_12345.csv').
+            gridmet_gfid (str): Path to the CSV file that maps field OPENET_IDs to
+                their corresponding GridMET cell GFIDs.
+            outdir (str): Path to the directory where the output .npy and .json index
+                files will be saved.
+            target_areas (list of str, optional): A list of specific hydrographic area IDs
+                to process. If None, all areas in `in_pqt` will be processed. Defaults to None.
+            overwrite (bool, optional): If True, existing output files will be overwritten.
+                Defaults to False.
+            anomalous_recs_file (str, optional): Path to save a JSON file logging fields
+                that do not have the expected number of records. Defaults to None.
+            expected_recs (int, optional): The expected number of monthly records in a
+                complete time series (e.g., 40 years * 12 months = 480). Defaults to 480.
+
+        Returns:
+            None. The function saves files to disk.
+        """
+
     fields = pd.read_csv(gridmet_gfid, index_col='OPENET_ID')
 
     hyd_areas = [(f.split('_')[0], os.path.join(in_pqt, f)) for f in os.listdir(in_pqt) if f.endswith('.parquet')]
@@ -57,6 +97,9 @@ def preprocess_historical(in_pqt, gridmet, gridmet_gfid, outdir, target_areas=No
         for i, (fid, v) in enumerate(tqdm(zone_fields.iterrows(),
                                           desc=f'Processing {hydro_area}',
                                           total=zone_fields.shape[0])):
+
+            if fid != 'NV_20975':
+                continue
 
             g_fid = str(int(v['GFID']))
 
@@ -127,7 +170,7 @@ if __name__ == '__main__':
 
     mishhape_file = os.path.join(fields_data, 'unexpected_length_fields.json')
 
-    preprocess_historical(pqt_dir, met, gridmet_factors_, npy_dir, target_areas=None, overwrite=True,
+    preprocess_historical(pqt_dir, met, gridmet_factors_, npy_dir, target_areas=['108'], overwrite=True,
                           anomalous_recs_file=mishhape_file)
 
 # ========================= EOF ====================================================================

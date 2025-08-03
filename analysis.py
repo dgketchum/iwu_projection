@@ -19,34 +19,50 @@ IDX_KWARGS = dict(distribution=indices.Distribution.gamma,
 
 
 def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_areas=None):
-    """Calculates and saves the correlation and linear regression coefficients
-    between meteorological drought (SPI) and irrigation water use (IWU). For now,
-    the only function to run a subsequent projection is calc='cc' and  standardize_water_use=False.
 
-    TODO: needs a test/train split for validation.
+    """Quantifies the relationship between meteorological drought and water use metrics.
 
-    This function systematically explores the relationship between SPI and IWU for
-    numerous agricultural fields. It iterates through various SPI timescales and
-    calculates the IWU either as a standardized index or as a direct rolling
-    sum, controlled by the `standardize_water_use` flag. For now, it only looks at the calendar
-    year IWU and long meteorological time periods. These can be extended with a little modification.
+        This function systematically analyzes the statistical relationship between the
+        Standardized Precipitation Index (SPI), a measure of meteorological drought,
+        and various agricultural water use (IWU) metrics derived from historical data.
+        It operates on pre-processed NumPy arrays, iterating through each agricultural
+        field to perform the analysis.
 
-    Using multiprocessing,
-    it computes the Pearson's correlation, regression slope, intercept, and
-    p-value for the relationship. All results are compiled and saved to a
-    single CSV file for subsequent analysis.
+        The core workflow involves:
+        1.  Calculating SPI at multiple timescales (e.g., 12, 24, 36 months).
+        2.  Calculating an annual water use metric based on the `metric` parameter
+            ('cc', 'kc', or 'cu_eto').
+        3.  Quantifying this annual water use either as a rolling sum/mean or as a
+            standardized index, controlled by the `standardize_water_use` flag.
+        4.  Using multiprocessing to efficiently compute Pearson's correlation and
+            linear regression statistics (slope, intercept, p-value) between the
+            annual SPI and IWU time series for every field.
 
-    Args:
-        npy_dir (str): Path to the directory containing the input .npy data file.
-        out_dir (str): Path to the root directory for saving the output CSV file.
-        procs (int): Number of parallel processes to use for computation.
-        metric (str): The raw water use metric to use ('kc' for et/eto or 'cc').
-        standardize_water_use (bool): Flag to determine IWU calculation. If True,
-            computes a standardized index. If False, computes a rolling sum.
+        The final output is a comprehensive CSV file for each hydrographic area,
+        containing the calculated coefficients for all tested parameter combinations.
 
-    Returns:
-        str: The full path to the saved output CSV file.
-    """
+        Note:
+            Currently, downstream projection models are configured to use results
+            generated with `metric='cc'` and `standardize_water_use=False`. A
+            train/test split for validation is a planned future improvement.
+
+        Args:
+            npy_dir (str): Path to the directory containing the input .npy data arrays
+                and their corresponding .json index files.
+            out_dir (str): Path to the root directory where output CSV files will be saved.
+            procs (int): The number of parallel processes to use for computation.
+            metric (str): The water use metric to analyze. Options include: 'cc' (crop
+                consumptive use), 'kc' (crop coefficient, et/eto), or 'cu_eto'
+                (consumptive use fraction, cc/eto).
+            standardize_water_use (bool): Flag determining how IWU is calculated. If
+                True, computes a standardized index of water use. If False, computes
+                a 12-month rolling sum or mean.
+            target_areas (list of str, optional): A list of specific hydrographic area IDs
+                to process. If None, all areas in `npy_dir` will be processed. Defaults to None.
+
+        Returns:
+            None. The function saves analysis results to CSV files.
+        """
 
     hyd_areas = [(f.split('.')[0], os.path.join(npy_dir, f)) for f in os.listdir(npy_dir) if f.endswith('.npy')]
     hyd_areas = sorted(hyd_areas, key=lambda x: x[0])
@@ -98,13 +114,13 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_
 
                 if weighting:
                     eto = pd.DataFrame(data=np.array(input_array[:, :, COLS.index('eto')]).T,
-                                         index=dt_range, columns=index)
+                                       index=dt_range, columns=index)
                     eto[eto < 0.] = 0.
                     weights = eto / eto.rolling(window=12, min_periods=12, closed='right').sum()
                     iwu = (iwu * weights).rolling(window=12, min_periods=12, closed='right').sum()
 
                 else:
-                    iwu = iwu.rolling(window=12, min_periods=12, closed='right').mean()
+                    iwu = iwu.rolling(window=12, min_periods=12, closed='right').sum()
 
                 iwu = iwu.values.T
 
@@ -169,7 +185,7 @@ def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_
         else:
             std_desc = 'rolling_mean'
 
-        odir =  os.path.join(out_dir, f'{metric}_Fof_SPI', std_desc)
+        odir = os.path.join(out_dir, f'{metric}_Fof_SPI', std_desc)
 
         if not os.path.isdir(odir):
             os.makedirs(odir, exist_ok=True)
@@ -261,8 +277,8 @@ if __name__ == '__main__':
 
     targets = None
 
-    correlations(indir, odir_, procs=1, metric='cc', standardize_water_use=False, target_areas=targets)
-    correlations(indir, odir_, procs=1, metric='kc', standardize_water_use=False, target_areas=targets)
-    correlations(indir, odir_, procs=1, metric='cu_eto', standardize_water_use=False, target_areas=targets)
+    correlations(indir, odir_, procs=12, metric='cc', standardize_water_use=False, target_areas=targets)
+    # correlations(indir, odir_, procs=12, metric='kc', standardize_water_use=False, target_areas=targets)
+    # correlations(indir, odir_, procs=12, metric='cu_eto', standardize_water_use=False, target_areas=targets)
 
 # ========================= EOF ====================================================================

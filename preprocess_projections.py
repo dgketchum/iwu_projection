@@ -46,36 +46,64 @@ GRIDMET_RESAMPLE_MAP = {'year': 'first',
                         'eto_mm_uncorr': 'sum'}
 
 
-def split_projections(fields, raw_exports, outdir, num_workers=None, gridmet_correction=None):
-    """Restructures raw, year-based climate projections into continuous, field-specific time series files.
+def split_projections(fields, raw_exports, outdir, num_workers=None, gridmet_correction=None, start_year = 2024,
+                      end_year=2099, debug=False):
 
-    I needlessly downloaded daily projection data, so it should be modified to run on monthly when another
-    extract is made using Chris Pearson's maca_loop.py.
+    """Restructures raw MACA climate projections into continuous, location-based time series.
 
-    This function processes a large collection of raw, downscaled MACA V2 climate
-    projection files in daily timesteps, which are organized as one file per
-    year, model, and scenario. It reads these files in parallel, aggregates
-    daily data to monthly sums, optionally applies a bias correction to ETo,
-    and then reorganizes the entire dataset. The final output consists of one
-    compressed Parquet file per spatial identifier (GFID), where each file
+        This function orchestrates a large-scale data transformation, converting a collection
+        of raw, downscaled MACA V2 climate projection files into a more analysis-ready format.
+        The raw data is assumed to be organized as one file per year, model, and scenario.
+        The function processes these files in parallel, reorganizing the entire dataset so that
+        the final output consists of one file per spatial identifier (GFID).
 
-    Args:
-        fields (str): Path to a CSV file containing a list of unique 'GFID's
-            to process.
-        raw_exports (str): Path to the directory containing the raw,
-            year-by-year projection CSV files.
-        outdir (str): Path to the output directory where the final
-            GFID-specific Parquet files will be saved.
-        num_workers (int, optional): The number of parallel worker processes
-            to use for reading and writing files. Defaults to None, which
-            may use all available CPU cores depending on the executor.
-        gridmet_correction (str, optional): Path to a JSON file containing
-            monthly ETo bias-correction factors, keyed by GFID.
-    """
+        The core workflow is executed in two parallelized phases:
+        1.  **Reading and Aggregation:** It reads thousands of daily projection files. For each,
+            it aggregates the data to a monthly time step (summing precipitation and ETo,
+            averaging temperature). If a correction file is provided, it applies a monthly,
+            location-specific bias-correction factor to the reference evapotranspiration (ETo)
+            to align it with historical GridMET data.
+        2.  **Consolidation and Writing:** It groups all processed monthly data by GFID. For each
+            GFID, it concatenates the time series from all models and scenarios into a single,
+            wide-format DataFrame. This DataFrame is then saved as a compressed Parquet file.
 
-    fields = pd.read_csv(fields)
+        Note: The current implementation processes daily data, which is computationally
+        intensive. It is designed to be adapted for pre-aggregated monthly data in the future.
+
+        Args:
+            fields (str): Path to a CSV file containing the unique 'GFID's that will be
+                processed. This file defines the spatial locations of interest.
+            raw_exports (str): Path to the root directory containing the raw, year-by-year
+                MACA projection CSV files.
+            outdir (str): Path to the output directory where the final GFID-specific
+                Parquet files (`.parquet.gz`) will be saved.
+            num_workers (int, optional): The number of parallel worker processes to use.
+                Defaults to the system's default for ProcessPoolExecutor.
+            gridmet_correction (str, optional): Path to a JSON file containing monthly ETo
+                bias-correction factors, keyed by GFID. This is used to correct systematic
+                biases in the MACA ETo projections.
+            start_year (int, optional): The first year of the projection period to process.
+                Defaults to 2024.
+            end_year (int, optional): The last year of the projection period to process.
+                Defaults to 2099.
+            debug (bool, optional): If True, runs the function on a small subset of the
+                data for testing and debugging purposes. Defaults to False.
+
+        Returns:
+            None. The function writes files directly to the specified output directory.
+        """
+
+    if debug:
+        start_year, end_year = 2024, 2026
+        n_rows = 100
+    else:
+        n_rows=None
+
+    fields = pd.read_csv(fields, nrows=n_rows)
     fields['GFID'] = fields['GFID'].astype(str)
     gfids = fields['GFID'].unique()
+
+
 
     if gridmet_correction:
         with open(gridmet_correction, 'r') as f_obj:
@@ -92,9 +120,12 @@ def split_projections(fields, raw_exports, outdir, num_workers=None, gridmet_cor
     for model in MODEL_LIST:
         for scenario in FUTURE_SCENARIO_LIST:
 
+            if debug and not (model == 'HadGEM2-CC365' and scenario == 'rcp45'):
+                continue
+
             add_files = []
 
-            for yr in range(2025, 2100):
+            for yr in range(start_year, end_year + 1):
                 file_ = os.path.join(raw_exports, f'{scenario}_{model}_{yr}.csv')
                 if not os.path.exists(file_):
                     print(f'{os.path.basename(file_)} does not exist')
@@ -104,7 +135,7 @@ def split_projections(fields, raw_exports, outdir, num_workers=None, gridmet_cor
 
             proj_files.extend(add_files)
 
-    if num_workers == 1:
+    if num_workers == 1 or debug:
         results = []
         for proj_file in proj_files:
             result = _read_and_process_proj_file(proj_file, correction_dict=corrections)
@@ -135,7 +166,7 @@ def split_projections(fields, raw_exports, outdir, num_workers=None, gridmet_cor
         if gfid in gfid_data_collector:
             tasks.append((gfid, gfid_data_collector[gfid], outdir))
 
-    if num_workers == 1:
+    if num_workers == 1 or debug:
         for task in tasks:
             _process_and_write_gfid(task)
     else:
@@ -157,10 +188,14 @@ def _read_and_process_proj_file(proj_file, correction_dict=None):
     file_data_collector = defaultdict(lambda: defaultdict(list))
 
     try:
-        df = pd.read_csv(proj_file, usecols=['GFID', 'datenum', 'pr', 'eto_mm'], engine='c')
+        df = pd.read_csv(proj_file, usecols=['GFID', 'datenum', 'tasmin', 'tasmax', 'pr', 'eto_mm'], engine='c')
+        df = df.rename(columns={'tasmin': 'tmin', 'tasmax': 'tmax'})
         df['date'] = pd.to_datetime(df['datenum'], format='%Y%m%d')
         df['GFID'] = df['GFID'].astype(str)
-        df_monthly = df.groupby('GFID').resample('MS', on='date')[['pr', 'eto_mm']].sum()
+        df_monthly = df.groupby('GFID').resample('MS', on='date').agg({'pr': 'sum',
+                                                                       'eto_mm': 'sum',
+                                                                       'tmin': 'mean',
+                                                                       'tmax': 'mean'})
 
         if correction_dict is not None:
             monthly_correction_dicts = df_monthly.index.get_level_values('GFID').map(correction_dict)
@@ -190,6 +225,8 @@ def _process_and_write_gfid(args):
         full_ts_df.rename(columns={'pr': f'{scenario}_{model}_ppt',
                                    'eto_mm': f'{scenario}_{model}_eto',
                                    'eto_corrected': f'{scenario}_{model}_eto_corrected',
+                                   'tmin': f'{scenario}_{model}_tmin',
+                                   'tmax': f'{scenario}_{model}_tmax',
                                    }, inplace=True)
 
         processed_projections.append(full_ts_df)
@@ -227,6 +264,6 @@ if __name__ == '__main__':
     projections_processed_ = os.path.join(fields_data, 'maca', 'processed')
     met = os.path.join(fields_data, 'gridmet')
     split_projections(gfid_fields, projections_extracts_, projections_processed_,
-                      gridmet_correction=gridmet_factors, num_workers=12)
+                      gridmet_correction=gridmet_factors, num_workers=12, debug=False)
 
 # ========================= EOF ====================================================================
