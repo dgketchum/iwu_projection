@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 from climate_indices import compute, indices
 
 COLS = ['et', 'cc', 'ppt', 'eto', 'eff_ppt']
@@ -19,7 +20,7 @@ MODEL_LIST = ['bcc-csm1-1', 'bcc-csm1-1-m', 'BNU-ESM', 'CanESM2', 'CCSM4',
 
 def project_net_et(correlations_csv_dir, historical_npy_dir,
                    future_parquet_dir, out_dir, gfid_csv,
-                   target_areas=None, weighted=False,
+                   target_areas=None, weighted=False, best_models_json=None,
                    from_month=12, metric='cc', plot_dir=None):
     """Projects future water use for fields using historical drought-response models.
 
@@ -57,6 +58,7 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
             weighted (bool, optional): If True, the predicted water use metric (which is
                 assumed to be a ratio like 'kc') is multiplied by the annual future ETo
                 to yield an absolute consumptive use value. Defaults to False.
+            best_models_json (str, optional): JSON file to write best model summaries.
             from_month (int, optional): The end-of-season month used to extract annual
                 values from the time series (e.g., 10 for October). Defaults to 12.
             metric (str, optional): The water use metric being projected, used for naming
@@ -70,7 +72,11 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
                  os.listdir(historical_npy_dir) if f.endswith('.npy')]
     hyd_areas = sorted(hyd_areas, key=lambda x: x[0])
 
-    for hydro_area, npy_file in hyd_areas:
+    hyd_areas_best_models = {}
+
+    for e, (hydro_area, npy_file) in enumerate(hyd_areas):
+
+        print(f'{e} of {len(hyd_areas)}: {hydro_area}', flush=True)
 
         if target_areas and hydro_area not in target_areas:
             continue
@@ -100,8 +106,12 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
                 'slope': correlations_df.loc[field_id, slope_col],
                 'correlation': correlations_df.loc[field_id, corr_col],
                 'intercept': correlations_df.loc[field_id, intercept_col],
-                'pvalue': correlations_df.loc[field_id, pval_col]
+                'pvalue': correlations_df.loc[field_id, pval_col],
+                'desc': best_corr_col,
+                'metric': metric,
             }
+
+        hyd_areas_best_models[hydro_area] = best_models
 
         historical_data = np.load(npy_file)
 
@@ -252,6 +262,11 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
 
             projection_df.to_parquet(output_filename)
 
+            if best_models_json:
+                with open(best_models_json, 'w') as fp:
+                    json.dump(best_models, fp, indent=4)
+                print(f"{best_models_json}")
+
             print(f"{output_filename} {projection_df.shape}")
 
 
@@ -338,6 +353,9 @@ if __name__ == '__main__':
         projection_plot_dir_ = os.path.join(nv_data_dir, 'fields_data', 'iwu_projection_plots', calculation_type)
         os.makedirs(projection_plot_dir_, exist_ok=True)
 
+        best_models_output = os.path.join(results_dir, f'{calculation_type}_Fof_SPI',
+                                         f'{calculation_type}_best_models.json')
+
         project_net_et(
             correlations_csv_dir=correlations_csv_,
             historical_npy_dir=historical_npy_dir_,
@@ -347,7 +365,8 @@ if __name__ == '__main__':
             metric=calculation_type,
             out_dir=projection_out_dir_,
             gfid_csv=gfid_fields_,
-            target_areas='117',
+            target_areas=None,
+            best_models_json=best_models_output,
             plot_dir=None,
         )
 
