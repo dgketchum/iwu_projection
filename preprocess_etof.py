@@ -17,6 +17,8 @@ GRIDMET_RESAMPLE_MAP = {'year': 'first',
                         'centroid_lon': 'first',
                         'elev_m': 'first',
                         'eto_mm': 'sum',
+                        'tmin': 'mean',
+                        'tmax': 'mean',
                         'prcp_mm': 'sum',
                         'eto_mm_uncorr': 'sum'}
 
@@ -98,9 +100,6 @@ def preprocess_historical(in_pqt, gridmet, gridmet_gfid, outdir, target_areas=No
                                           desc=f'Processing {hydro_area}',
                                           total=zone_fields.shape[0])):
 
-            if fid != 'NV_20975':
-                continue
-
             g_fid = str(int(v['GFID']))
 
             file_ = os.path.join(gridmet, 'gridmet_{}.csv'.format(g_fid))
@@ -129,13 +128,15 @@ def preprocess_historical(in_pqt, gridmet, gridmet_gfid, outdir, target_areas=No
 
             subarray['eto'] = met_df['eto_mm_gm'].copy()
             subarray['ppt'] = met_df['prcp_mm_gm'].copy()
+            subarray['tmin'] = met_df['tmin_gm'].copy() - 273.15
+            subarray['tmax'] = met_df['tmax_gm'].copy() - 273.15
 
             if first:
-                array = np.zeros((len(zone_fids), len(subarray.index), len(REMAP_COLS))) * np.nan
+                array = np.zeros((len(zone_fids), subarray.shape[0], subarray.shape[1])) * np.nan
                 first = False
 
             idxes.append(fid)
-            array[i, :, :] = subarray.values.reshape((1, len(subarray.index), len(REMAP_COLS)))
+            array[i, :, :] = subarray.values.reshape((1, subarray.shape[0], subarray.shape[1]))
 
         with open(out_json, 'w') as f:
             json.dump({'index': idxes}, f, indent=4)
@@ -170,7 +171,7 @@ if __name__ == '__main__':
 
     mishhape_file = os.path.join(fields_data, 'unexpected_length_fields.json')
 
-    preprocess_historical(pqt_dir, met, gridmet_factors_, npy_dir, target_areas=['108'], overwrite=True,
+    preprocess_historical(pqt_dir, met, gridmet_factors_, npy_dir, target_areas=None, overwrite=True,
                           anomalous_recs_file=mishhape_file)
 
 # ========================= EOF ====================================================================

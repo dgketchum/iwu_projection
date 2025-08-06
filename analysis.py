@@ -9,7 +9,7 @@ from scipy import stats
 
 from climate_indices import compute, indices
 
-COLS = ['et', 'cc', 'ppt', 'eto', 'eff_ppt']
+COLS = ['et', 'cc', 'ppt', 'eto', 'eff_ppt', 'tmin', 'tmax']
 
 IDX_KWARGS = dict(distribution=indices.Distribution.gamma,
                   data_start_year=1985,
@@ -278,7 +278,7 @@ if __name__ == '__main__':
     targets = None
 
     correlations(indir, odir_, procs=12, metric='cc', standardize_water_use=False, target_areas=targets)
-    # correlations(indir, odir_, procs=12, metric='kc', standardize_water_use=False, target_areas=targets)
-    # correlations(indir, odir_, procs=12, metric='cu_eto', standardize_water_use=False, target_areas=targets)
+    correlations(indir, odir_, procs=12, metric='kc', standardize_water_use=False, target_areas=targets)
+    correlations(indir, odir_, procs=12, metric='cu_eto', standardize_water_use=False, target_areas=targets)
 
 # ========================= EOF ====================================================================

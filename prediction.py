@@ -7,7 +7,7 @@ import pandas as pd
 from tqdm import tqdm
 from climate_indices import compute, indices
 
-COLS = ['et', 'cc', 'ppt', 'eto', 'eff_ppt']
+COLS = ['et', 'cc', 'ppt', 'eto', 'eff_ppt', 'tmin', 'tmax']
 
 FUTURE_SCENARIO_LIST = ['rcp45', 'rcp85']
 
@@ -142,7 +142,7 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
             model_params = best_models[field_id]
             met_p = model_params['met_p']
 
-            first = True
+            first, historical_ppt = True, None
 
             for model_name in MODEL_LIST:
                 for scenario in FUTURE_SCENARIO_LIST:
@@ -154,6 +154,8 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
 
                     ppt_col_name = f'{future_col_name}_ppt'
                     eto_col_name = f'{future_col_name}_eto_corrected'
+                    tmin_col_name = f'{future_col_name}_tmin'
+                    tmax_col_name = f'{future_col_name}_tmax'
 
                     if ppt_col_name not in future_field_df.columns:
                         raise ValueError
@@ -163,12 +165,22 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
                     future_dt_range = future_ppt_series.index
                     full_dt_range = hist_dt_range.union(future_dt_range)
 
-                    historical_ppt = historical_data[i, :, COLS.index('ppt')]
-
                     if first:
+
+                        historical_ppt = historical_data[i, :, COLS.index('ppt')]
                         historical_ppt = pd.Series(historical_ppt, index=hist_dt_range)
                         historical_ppt.name = 'historical_ppt'
                         field_projections.append(historical_ppt)
+
+                        historical_tmin = historical_data[i, :, COLS.index('tmin')]
+                        historical_tmin = pd.Series(historical_tmin, index=hist_dt_range)
+                        historical_tmin.name = 'historical_tmin'
+                        field_projections.append(historical_tmin)
+
+                        historical_tmax = historical_data[i, :, COLS.index('tmax')]
+                        historical_tmax = pd.Series(historical_tmax, index=hist_dt_range)
+                        historical_tmax.name = 'historical_tmax'
+                        field_projections.append(historical_tmax)
 
                         historical_eto = historical_data[i, :, COLS.index('eto')]
                         historical_eto = pd.Series(historical_eto, index=hist_dt_range)
@@ -240,6 +252,16 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
                     future_ppt_series.name = f'{model_name}_{scenario}_ppt'
                     field_projections.append(future_ppt_series)
 
+                    # TODO: convert to deg C in preprocessing module next time
+                    future_tmin_series = future_field_df_trunc[tmin_col_name] - 273.15
+                    future_tmin_series.name = f'{model_name}_{scenario}_tmin'
+                    field_projections.append(future_tmin_series)
+
+                    # TODO: convert to deg C in preprocessing module next time
+                    future_tmax_series = future_field_df_trunc[tmax_col_name] - 273.15
+                    future_tmax_series.name = f'{model_name}_{scenario}_tmax'
+                    field_projections.append(future_tmax_series)
+
             if not field_projections:
                 continue
 
@@ -261,13 +283,13 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
                 plot_water_use_projection(projection_df, field_id, metric, out_dir=plot_dir)
 
             projection_df.to_parquet(output_filename)
-
-            if best_models_json:
-                with open(best_models_json, 'w') as fp:
-                    json.dump(best_models, fp, indent=4)
-                print(f"{best_models_json}")
-
             print(f"{output_filename} {projection_df.shape}")
+
+    if best_models_json:
+        with open(best_models_json, 'w') as fp:
+            json.dump(hyd_areas_best_models, fp, indent=4)
+        print(f"{best_models_json}")
+
 
 
 def plot_water_use_projection(projection_df, field_id, metric, out_dir):
