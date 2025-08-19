@@ -21,7 +21,7 @@ MODEL_LIST = ['bcc-csm1-1', 'bcc-csm1-1-m', 'BNU-ESM', 'CanESM2', 'CCSM4',
 def project_net_et(correlations_csv_dir, historical_npy_dir,
                    future_parquet_dir, out_dir, gfid_csv,
                    target_areas=None, weighted=False, best_models_json=None,
-                   from_month=12, metric='cc', plot_dir=None):
+                   from_month=12, metric='cc', plot_dir=None, overwrite=False):
     """Projects future water use for fields using historical drought-response models.
 
         For each agricultural field, this function applies a previously developed statistical
@@ -121,6 +121,11 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
         hist_dt_range = pd.to_datetime([f'{y}-{m}-01' for y in range(1980, 2025) for m in range(1, 13)])
 
         for i, field_id in enumerate(field_index):
+
+            output_filename = os.path.join(out_dir, f'projected_{metric}_{field_id}.parquet')
+
+            if os.path.exists(output_filename) and not overwrite:
+                continue
 
             if field_id not in best_models:
                 continue
@@ -267,8 +272,6 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
 
             projection_df = pd.concat(field_projections, axis=1)
 
-            output_filename = os.path.join(out_dir, f'projected_{metric}_{field_id}.parquet')
-
             if plot_dir:
                 print(f'\n\n{metric} {field_id}')
                 print(f'{field_id} historical water year end IWU: {historical_netet_wye.mean()}')
@@ -345,6 +348,7 @@ if __name__ == '__main__':
     results_dir = os.path.join(nv_data_dir, 'fields_data', 'correlation_analysis')
 
     calculation_types = ['cc', 'kc', 'cu_eto']
+    # calculation_types = ['kc']
 
     for calculation_type in calculation_types:
 
@@ -378,6 +382,8 @@ if __name__ == '__main__':
         best_models_output = os.path.join(results_dir, f'{calculation_type}_Fof_SPI',
                                          f'{calculation_type}_best_models.json')
 
+        # targets = ['161', '189B', '028', '067', '056', '103', '027', '016', '172', '220']
+
         project_net_et(
             correlations_csv_dir=correlations_csv_,
             historical_npy_dir=historical_npy_dir_,
@@ -390,6 +396,7 @@ if __name__ == '__main__':
             target_areas=None,
             best_models_json=best_models_output,
             plot_dir=None,
+            overwrite=False,
         )
 
 # ========================= EOF ====================================================================

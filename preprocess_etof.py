@@ -159,7 +159,7 @@ if __name__ == '__main__':
     fields_data = os.path.join(nv_data, 'fields_data')
     pqt_ = os.path.join(fields_data, 'NV_field_summaries_EToF_final_large.parquet')
     js_ = os.path.join(fields_data, 'NV_field_summaries_EToF_tiles.json')
-    pqt_dir = os.path.join(fields_data, 'field_summaries')
+    pqt_dir = os.path.join(fields_data, 'parquet_fields')
 
     fields_gis = os.path.join(nv_data, 'fields_gis')
     nv_fields_boundaries = os.path.join(fields_gis, 'Nevada_Agricultural_Field_Boundaries_20250214')
@@ -171,7 +171,7 @@ if __name__ == '__main__':
 
     mishhape_file = os.path.join(fields_data, 'unexpected_length_fields.json')
 
-    preprocess_historical(pqt_dir, met, gridmet_factors_, npy_dir, target_areas=None, overwrite=True,
+    preprocess_historical(pqt_dir, met, gridmet_factors_, npy_dir, target_areas=['045'], overwrite=False,
                           anomalous_recs_file=mishhape_file)
 
 # ========================= EOF ====================================================================

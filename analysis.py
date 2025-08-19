@@ -19,7 +19,6 @@ IDX_KWARGS = dict(distribution=indices.Distribution.gamma,
 
 
 def correlations(npy_dir, out_dir, procs, metric, standardize_water_use, target_areas=None):
-
     """Quantifies the relationship between meteorological drought and water use metrics.
 
         This function systematically analyzes the statistical relationship between the
@@ -271,14 +270,14 @@ if __name__ == '__main__':
 
     nv_data = os.path.join(root, 'Nevada', 'dri_field_pts')
 
-    summaries = os.path.join(nv_data, 'fields_data', 'field_summaries')
     indir = os.path.join(nv_data, 'fields_data', 'fields_npy')
     odir_ = os.path.join(nv_data, 'fields_data', 'correlation_analysis')
 
+    # targets = ['161', '189B', '028', '067', '056', '103', '027', '016', '172', '220', '045']
     targets = None
 
-    correlations(indir, odir_, procs=12, metric='cc', standardize_water_use=False, target_areas=targets)
     correlations(indir, odir_, procs=12, metric='kc', standardize_water_use=False, target_areas=targets)
+    correlations(indir, odir_, procs=12, metric='cc', standardize_water_use=False, target_areas=targets)
     correlations(indir, odir_, procs=12, metric='cu_eto', standardize_water_use=False, target_areas=targets)
 
 # ========================= EOF ====================================================================
