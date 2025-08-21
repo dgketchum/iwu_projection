@@ -68,6 +68,9 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
             None. The function writes projection results to Parquet files.
         """
 
+    gridmet_fields = pd.read_csv(gfid_csv, index_col='OPENET_ID')
+    fields_gridmap = {i: r['GFID'] for i, r in gridmet_fields.iterrows()}
+
     hyd_areas = [(f.split('.')[0], os.path.join(historical_npy_dir, f)) for f in
                  os.listdir(historical_npy_dir) if f.endswith('.npy')]
     hyd_areas = sorted(hyd_areas, key=lambda x: x[0])
@@ -84,9 +87,6 @@ def project_net_et(correlations_csv_dir, historical_npy_dir,
         corr_file = os.path.join(correlations_csv_dir, f'{hydro_area}.csv')
 
         correlations_df = pd.read_csv(corr_file, index_col=0)
-
-        fields_gridmap = pd.read_csv(gfid_csv, index_col='OPENET_ID')
-        fields_gridmap = {i: r['GFID'] for i, r in fields_gridmap.iterrows()}
 
         corr_cols = [c for c in correlations_df.columns if '_corr' in c]
         s_best_corr_col = correlations_df[corr_cols].abs().idxmax(axis=1)
@@ -395,6 +395,7 @@ if __name__ == '__main__':
             gfid_csv=gfid_fields_,
             target_areas=None,
             best_models_json=best_models_output,
+            target_fips=32017,
             plot_dir=None,
             overwrite=False,
         )
