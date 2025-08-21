@@ -8,7 +8,6 @@ from tqdm import tqdm
 
 
 def summarize_projections(projection_dir, historical_index_dir, out_dir, metric, target_areas=None):
-
     os.makedirs(out_dir, exist_ok=True)
 
     if metric == 'kc':
@@ -92,9 +91,8 @@ def summarize_projections(projection_dir, historical_index_dir, out_dir, metric,
         print(f'Wrote {hist_path} and {stats_path}')
 
 
-def plot_aggregated_projections(projection_dir, historical_index_dir, out_dir, metric,
-                                target_areas=None, fields_table=None, fips_filter=None, aggregate_all=False):
-
+def plot_aggregated_projections(projection_dir, historical_index_dir, out_dir, fields_table, metric,
+                                target_areas=None, fips_filter=None, aggregate_all=False):
     os.makedirs(out_dir, exist_ok=True)
 
     if metric == 'kc':
@@ -104,12 +102,11 @@ def plot_aggregated_projections(projection_dir, historical_index_dir, out_dir, m
         hist_col = 'historical_netet_wye'
         future_col_suffix = '_netET'
 
-    field_ids_from_table = None
-    if fields_table:
-        fields = pd.read_parquet(fields_table)
-        if fips_filter:
-            fields = fields[fields['FIPS'] == fips_filter]
-        field_ids_from_table = set(fields['OPENET_ID'].tolist())
+    fields_df = pd.read_parquet(fields_table)
+    if fips_filter:
+        fields_df = fields_df[fields_df['FIPS'] == fips_filter]
+    field_ids_from_table = set(fields_df['OPENET_ID'].tolist())
+    fields_df.index = fields_df['OPENET_ID']
 
     all_hydro_areas = {}
     index_files = [f for f in os.listdir(historical_index_dir) if f.endswith('_index.json')]
@@ -120,7 +117,7 @@ def plot_aggregated_projections(projection_dir, historical_index_dir, out_dir, m
         with open(os.path.join(historical_index_dir, index_file), 'r') as f:
             all_hydro_areas[hydro_area] = json.load(f)['index']
 
-    def _aggregate_and_plot(field_ids, plot_title, out_file):
+    def _aggregate_and_plot(fields_df_, field_ids, projection_dir_, plot_title, out_file):
         if not field_ids:
             print(f"No fields to process for {plot_title}")
             return
@@ -128,27 +125,30 @@ def plot_aggregated_projections(projection_dir, historical_index_dir, out_dir, m
         total_historical_series = None
         total_projections = {}
 
-        for field_id in field_ids:
-            parquet_file = os.path.join(projection_dir, f'projected_{metric}_{field_id}.parquet')
+        for field_id in tqdm(field_ids, total=len(field_ids), desc='Reading Field Projections'):
+            parquet_file = os.path.join(projection_dir_, f'projected_{metric}_{field_id}.parquet')
             if not os.path.exists(parquet_file):
                 continue
 
             df = pd.read_parquet(parquet_file)
+            field_area_acres = fields_df_.loc[field_id, 'Acres']
 
             if hist_col in df.columns:
                 historical_series = df[hist_col].dropna()
+                historical_series_vol = historical_series * 0.00328084 * field_area_acres
                 if total_historical_series is None:
-                    total_historical_series = historical_series
+                    total_historical_series = historical_series_vol
                 else:
-                    total_historical_series = total_historical_series.add(historical_series, fill_value=0)
+                    total_historical_series = total_historical_series.add(historical_series_vol, fill_value=0)
 
             for col in df.columns:
                 if future_col_suffix in col and ('rcp45' in col or 'rcp85' in col):
                     projection_series = df[col].dropna()
+                    projection_series_vol =  projection_series * 0.00328084 * field_area_acres
                     if col not in total_projections:
-                        total_projections[col] = projection_series
+                        total_projections[col] =projection_series_vol
                     else:
-                        total_projections[col] = total_projections[col].add(projection_series, fill_value=0)
+                        total_projections[col] = total_projections[col].add(projection_series_vol, fill_value=0)
 
         if total_historical_series is None and not total_projections:
             return
@@ -204,7 +204,7 @@ def plot_aggregated_projections(projection_dir, historical_index_dir, out_dir, m
         if fips_filter:
             out_fname = f'aggregated_fips_{fips_filter}_{metric}_projections.png'
 
-        _aggregate_and_plot(final_field_ids, title, os.path.join(out_dir, out_fname))
+        _aggregate_and_plot(fields_df, final_field_ids, projection_dir, title, os.path.join(out_dir, out_fname))
     else:
         for hydro_area, field_ids in all_hydro_areas.items():
             if field_ids_from_table is not None:
@@ -217,7 +217,7 @@ def plot_aggregated_projections(projection_dir, historical_index_dir, out_dir, m
                 title += f', FIPS: {fips_filter}'
 
             out_fname = f'aggregated_{hydro_area}_{metric}_projections.png'
-            _aggregate_and_plot(final_field_ids, title, os.path.join(out_dir, out_fname))
+            _aggregate_and_plot(fields_df, final_field_ids, projection_dir, title, os.path.join(out_dir, out_fname))
 
 
 if __name__ == '__main__':
@@ -246,13 +246,8 @@ if __name__ == '__main__':
     #                       metric=calculation_type,
     #                       target_areas=target_basins)
 
-    plot_aggregated_projections(projection_dir=projection_out_dir_,
-                                historical_index_dir=historical_npy_dir_,
-                                out_dir=postprocess_out_dir_,
-                                metric=calculation_type,
-                                target_areas=target_basins,
-                                fields_table=fields_shp_,
-                                fips_filter='32017',
-                                aggregate_all=True)
+    plot_aggregated_projections(projection_dir=projection_out_dir_, historical_index_dir=historical_npy_dir_,
+                                out_dir=postprocess_out_dir_, fields_table=fields_shp_, metric=calculation_type,
+                                target_areas=target_basins, fips_filter='32017', aggregate_all=True)
 
 # ========================= EOF ====================================================================
